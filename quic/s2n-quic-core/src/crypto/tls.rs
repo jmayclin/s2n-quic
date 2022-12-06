@@ -127,6 +127,20 @@ pub enum CipherSuite {
     Unknown,
 }
 
+impl From<u16> for CipherSuite {
+    fn from(item: u16) -> Self {
+        const tag1: u16 = (0x13 << 8) + 0x1;
+        const tag2: u16 = (0x13 << 8) + 0x2;
+        const tag3: u16 = (0x13 << 8) + 0x3;
+        match item {
+            tag1 => Self::TLS_AES_128_GCM_SHA256,
+            tag2 => Self::TLS_AES_256_GCM_SHA384,
+            tag3 => Self::TLS_CHACHA20_POLY1305_SHA256,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 impl crate::event::IntoEvent<crate::event::builder::CipherSuite> for CipherSuite {
     #[inline]
     fn into_event(self) -> crate::event::builder::CipherSuite {
@@ -237,3 +251,160 @@ impl HandshakeHeader {
 }
 
 s2n_codec::zerocopy_value_codec!(HandshakeHeader);
+
+macro_rules! extension_type {
+    ($($variant:ident($value:literal)),* $(,)?) => {
+        #[derive(Debug, PartialEq, Eq, AsBytes, Unaligned)]
+        #[repr(u8)]
+        pub enum ExtensionType {
+            $($variant = $value),*
+        }
+
+        impl TryFrom<u16> for ExtensionType {
+            type Error = ();
+
+            #[inline]
+            fn try_from(value: u16) -> Result<Self, Self::Error> {
+                match value {
+                    $($value => Ok(Self::$variant),)*
+                    _ => Err(()),
+                }
+            }
+        }
+    };
+}
+
+extension_type!(
+    server_name(0),
+    max_fragment_length(1),
+    status_request(5),
+    supported_groups(10),
+    ec_point_formats(11),
+    signature_algorithms(13),
+    use_srtp(14),
+    heartbeat(15),
+    application_layer_protocol_negotiation(16),
+    signed_certificate_timestamp(18),
+    client_certificate_type(19),
+    server_certificate_type(20),
+    padding(21),
+    extended_master_secret(23),
+    session_ticket(35),
+    reserved_one(40), // https://mailarchive.ietf.org/arch/msg/tls/vylBCK_8kOaybzcrVigbCTq9okk/
+    pre_shared_key(41),
+    early_data(42),
+    supported_versions(43),
+    cookie(44),
+    psk_key_exchange_modes(45),
+    reserved_two(46), // https://mailarchive.ietf.org/arch/msg/tls/vylBCK_8kOaybzcrVigbCTq9okk/
+    certificate_authorities(47),
+    oid_filters(48),
+    post_handshake_auth(49),
+    signature_algorithms_cert(50),
+    key_share(51),
+    quic_transport_parameters(57),
+);
+
+/*
+     uint16 ProtocolVersion;
+     opaque Random[32];
+
+     uint8 CipherSuite[2];    /* Cryptographic suite selector */
+
+     struct {
+         ProtocolVersion legacy_version = 0x0303;    /* TLS v1.2 */
+         Random random;
+         opaque legacy_session_id<0..32>;
+         CipherSuite cipher_suites<2..2^16-2>;
+         opaque legacy_compression_methods<1..2^8-1>;
+         Extension extensions<8..2^16-1>;
+     } ClientHello;
+*/
+
+#[derive(Debug)]
+pub struct Extension {
+    pub flavor: ExtensionType,
+    payload: Vec<u8>,
+}
+#[derive(Debug)]
+pub struct ClientHello {
+    protocol_version: u16,
+    random: [u8; 32],
+    legacy_session_id: Vec<u8>, // single field
+    cipher_suites: Vec<CipherSuite>,
+    legacy_compression_method: Vec<u8>, // single field
+    pub extensions: Vec<Extension>,
+}
+
+impl ClientHello {
+    pub fn from_bytes(payload: Vec<u8>) -> Self {
+        let mut read = 0;
+        let version: u16 = ((payload[0] as u16) << 8) + payload[1] as u16;
+        read += 2;
+        let random: [u8; 32] = payload[read..(read + 32)].try_into().unwrap();
+        read += 32;
+        let session_length = payload[read];
+        read += 1;
+        println!("Session length is {}", session_length);
+        let mut session_id: Vec<u8> = Vec::new();
+        session_id.extend_from_slice(&payload[read..(read + session_length as usize)]);
+        read += session_length as usize;
+
+        let cipher_suite_length: u16 = Self::to_16(payload[read], payload[read + 1]); //((payload[read] as u16) << 8) + payload[read + 1] as u16;
+        read += 2;
+        let mut cipher_suites: Vec<CipherSuite> = Vec::new();
+        for i in 0..(cipher_suite_length / 2) {
+            cipher_suites.push(Self::to_16(payload[read], payload[read + 1]).into());
+            read += 2;
+        }
+        //read += cipher_suite_length as usize;
+
+        let compression_length = payload[read];
+        read += 1;
+        read += compression_length as usize;
+        let extension_length = Self::to_16(payload[read], payload[read + 1]);
+        read += 2;
+        println!("Extension length is {}", extension_length);
+        let mut extensions = Vec::new();
+        while read < payload.len() {
+            let extension_type = Self::to_16(payload[read], payload[read + 1]);
+            read += 2;
+            let extension_enum: Result<ExtensionType, ()> = extension_type.try_into();
+            println!("{} extension type is {:?} ", extension_type, extension_enum);
+            let extension_payload_length = Self::to_16(payload[read], payload[read + 1]);
+            read += 2;
+            let mut extension_payload = Vec::new();
+            extension_payload.extend_from_slice(&payload[read..(read + extension_payload_length as usize)]);
+            let extension = Extension {
+                flavor: extension_enum.unwrap(),
+                payload: extension_payload,
+            };
+            read += extension_payload_length as usize;
+            extensions.push(extension);
+        }
+        ClientHello {
+            protocol_version: version,
+            random,
+            legacy_session_id: session_id,
+            cipher_suites,
+            legacy_compression_method: Vec::new(),
+            extensions: extensions,
+        }
+    }
+
+    fn to_16(b1: u8, b2: u8) -> u16 {
+        ((b1 as u16) << 8) + b2 as u16
+    }
+
+    pub fn get_servername(extension: &Extension) -> String {
+        if let ExtensionType::server_name = extension.flavor {
+            extension.payload.iter()
+                .cloned()
+                .map(|b| b as char)
+                .map(|c| if c.is_ascii() {c} else {'?'})
+                .collect()
+        } else {
+            panic!();
+        }
+    }
+}
