@@ -1169,6 +1169,7 @@ impl<Config: endpoint::Config> connection::Trait for ConnectionImpl<Config> {
         subscriber: &mut Config::EventSubscriber,
         packet_interceptor: &mut Config::PacketInterceptor,
         datagram_endpoint: &mut Config::DatagramEndpoint,
+        tls_endpoint: &mut Config::TLSEndpoint,
     ) -> Result<(), ProcessingError> {
         //= https://www.rfc-editor.org/rfc/rfc9000#section-7.2
         //= type=TODO
@@ -1209,6 +1210,7 @@ impl<Config: endpoint::Config> connection::Trait for ConnectionImpl<Config> {
                 subscriber,
                 packet_interceptor,
                 datagram_endpoint,
+                tls_endpoint,
             )?;
         }
 
@@ -1225,6 +1227,7 @@ impl<Config: endpoint::Config> connection::Trait for ConnectionImpl<Config> {
         subscriber: &mut Config::EventSubscriber,
         packet_interceptor: &mut Config::PacketInterceptor,
         datagram_endpoint: &mut Config::DatagramEndpoint,
+        tls_endpoint: &mut Config::TLSEndpoint,
     ) -> Result<(), ProcessingError> {
         if let Some((space, handshake_status)) = self.space_manager.initial_mut() {
             let mut publisher = self.event_context.publisher(datagram.timestamp, subscriber);

@@ -320,6 +320,7 @@ impl<Config: endpoint::Config> endpoint::Endpoint<Config> {
                         endpoint_context.event_subscriber,
                         endpoint_context.packet_interceptor,
                         endpoint_context.datagram,
+                        endpoint_context.tls
                     )
                     .map_err(|err| {
                         use connection::ProcessingError;
@@ -358,6 +359,7 @@ impl<Config: endpoint::Config> endpoint::Endpoint<Config> {
                     endpoint_context.event_subscriber,
                     endpoint_context.packet_interceptor,
                     endpoint_context.datagram,
+                    endpoint_context.tls,
                 )?;
 
                 Ok(())

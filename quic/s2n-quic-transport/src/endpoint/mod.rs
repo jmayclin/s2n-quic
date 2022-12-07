@@ -586,6 +586,7 @@ impl<Cfg: Config> Endpoint<Cfg> {
                     endpoint_context.event_subscriber,
                     endpoint_context.packet_interceptor,
                     endpoint_context.datagram,
+                    endpoint_context.tls,
                 ) {
                     match err {
                         ProcessingError::DuplicatePacket => {
@@ -653,6 +654,7 @@ impl<Cfg: Config> Endpoint<Cfg> {
                     endpoint_context.event_subscriber,
                     endpoint_context.packet_interceptor,
                     endpoint_context.datagram,
+                    endpoint_context.tls,
                 ) {
                     conn.close(
                         err,

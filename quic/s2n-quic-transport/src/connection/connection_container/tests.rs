@@ -144,6 +144,7 @@ impl connection::Trait for TestConnection {
         _subscriber: &mut <Self::Config as endpoint::Config>::EventSubscriber,
         _packet_interceptor: &mut <Self::Config as endpoint::Config>::PacketInterceptor,
         _datagram_endpoint: &mut <Self::Config as endpoint::Config>::DatagramEndpoint,
+        _tls_endpoint: &mut <Self::Config as endpoint::Config>::TLSEndpoint,
     ) -> Result<(), ProcessingError> {
         Ok(())
     }
@@ -158,6 +159,7 @@ impl connection::Trait for TestConnection {
         _subscriber: &mut <Self::Config as endpoint::Config>::EventSubscriber,
         _packet_interceptor: &mut <Self::Config as endpoint::Config>::PacketInterceptor,
         _datagram_endpoint: &mut <Self::Config as endpoint::Config>::DatagramEndpoint,
+        _tls_endpoint: &mut <Self::Config as endpoint::Config>::TLSEndpoint
     ) -> Result<(), ProcessingError> {
         Ok(())
     }

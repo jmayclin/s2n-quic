@@ -20,7 +20,7 @@ use s2n_codec::DecoderBufferMut;
 use s2n_quic_core::{
     application,
     application::ServerName,
-    event::{self, builder::DatagramDropReason, supervisor, ConnectionPublisher, IntoEvent},
+    event::{self, builder::DatagramDropReason, supervisor, ConnectionPublisher, IntoEvent, api::TlsClientHello},
     inet::{DatagramInfo, SocketAddress},
     io::tx,
     packet::{
@@ -121,6 +121,7 @@ pub trait ConnectionTrait: 'static + Send + Sized {
         subscriber: &mut <Self::Config as endpoint::Config>::EventSubscriber,
         packet_interceptor: &mut <Self::Config as endpoint::Config>::PacketInterceptor,
         datagram_endpoint: &mut <Self::Config as endpoint::Config>::DatagramEndpoint,
+        tls_endpoint: &mut <Self::Config as endpoint::Config>::TLSEndpoint,
     ) -> Result<(), ProcessingError>;
 
     /// Is called when an unprotected initial packet had been received
@@ -134,6 +135,7 @@ pub trait ConnectionTrait: 'static + Send + Sized {
         subscriber: &mut <Self::Config as endpoint::Config>::EventSubscriber,
         packet_interceptor: &mut <Self::Config as endpoint::Config>::PacketInterceptor,
         datagram_endpoint: &mut <Self::Config as endpoint::Config>::DatagramEndpoint,
+        tls_endpoint: &mut <Self::Config as endpoint::Config>::TLSEndpoint,
     ) -> Result<(), ProcessingError>;
 
     /// Is called when a handshake packet had been received
@@ -219,6 +221,7 @@ pub trait ConnectionTrait: 'static + Send + Sized {
         subscriber: &mut <Self::Config as endpoint::Config>::EventSubscriber,
         packet_interceptor: &mut <Self::Config as endpoint::Config>::PacketInterceptor,
         datagram_endpoint: &mut <Self::Config as endpoint::Config>::DatagramEndpoint,
+        tls_endpoint: &mut <Self::Config as endpoint::Config>::TLSEndpoint,
     ) -> Result<(), ProcessingError> {
         //= https://www.rfc-editor.org/rfc/rfc9000#section-5.2.1
         //# If a client receives a packet that uses a different version than it
@@ -273,6 +276,7 @@ pub trait ConnectionTrait: 'static + Send + Sized {
                 subscriber,
                 packet_interceptor,
                 datagram_endpoint,
+                tls_endpoint,
             ),
             ProtectedPacket::ZeroRtt(packet) => self.handle_zero_rtt_packet(
                 datagram,
@@ -310,6 +314,7 @@ pub trait ConnectionTrait: 'static + Send + Sized {
         subscriber: &mut <Self::Config as endpoint::Config>::EventSubscriber,
         packet_interceptor: &mut <Self::Config as endpoint::Config>::PacketInterceptor,
         datagram_endpoint: &mut <Self::Config as endpoint::Config>::DatagramEndpoint,
+        tls_endpoint: &mut <Self::Config as endpoint::Config>::TLSEndpoint,
     ) -> Result<(), connection::Error> {
         let remote_address = path_handle.remote_address();
         let connection_info = ConnectionInfo::new(&remote_address);
@@ -352,6 +357,7 @@ pub trait ConnectionTrait: 'static + Send + Sized {
                     subscriber,
                     packet_interceptor,
                     datagram_endpoint,
+                    tls_endpoint,
                 );
 
                 if let Err(ProcessingError::ConnectionError(err)) = result {
