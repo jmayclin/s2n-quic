@@ -19,7 +19,7 @@ use crate::{
     path::{self, path_event},
     processed_packet::ProcessedPacket,
     recovery::{recovery_event, RttEstimator},
-    space::{PacketSpace, PacketSpaceManager},
+    space::{PacketSpace, PacketSpaceManager, TranportLimits},
     stream, transmission,
     transmission::interest::Provider as _,
     wakeup_queue::WakeupHandle,
@@ -35,7 +35,10 @@ use s2n_quic_core::{
     application,
     application::ServerName,
     connection::{id::Generator as _, InitialId, PeerId},
-    crypto::{tls, CryptoSuite},
+    crypto::{
+        tls::{self, Endpoint},
+        CryptoSuite,
+    },
     datagram::{Receiver, Sender},
     event::{
         self,
@@ -1229,7 +1232,12 @@ impl<Config: endpoint::Config> connection::Trait for ConnectionImpl<Config> {
         datagram_endpoint: &mut Config::DatagramEndpoint,
         tls_endpoint: &mut Config::TLSEndpoint,
     ) -> Result<(), ProcessingError> {
-        if let Some((space, handshake_status)) = self.space_manager.initial_mut() {
+        //let mut tls_session = Option::None;
+        let (packet, session_stuff) = {
+            let (space, handshake_status) = match self.space_manager.initial_mut() {
+                Some((s, hs)) => (s, hs),
+                None => return Ok(()),
+            };
             let mut publisher = self.event_context.publisher(datagram.timestamp, subscriber);
 
             //= https://www.rfc-editor.org/rfc/rfc9000#section-5.2
@@ -1262,12 +1270,24 @@ impl<Config: endpoint::Config> connection::Trait for ConnectionImpl<Config> {
                 packet_interceptor,
             )?;
 
-            // try to move the crypto state machine forward
-            self.update_crypto_state(datagram.timestamp, subscriber, datagram_endpoint)?;
+            if let TranportLimits::Configured((id, params)) = space.tranport_configuration {
+                let tls_session = tls_endpoint.new_server_session(&params);
+                space.tranport_configuration = TranportLimits::Installed;
+                (processed_packet, Option::Some((tls_session, id)))
+            } else {
+                (processed_packet, Option::None)
+            }
+        };
 
-            // notify the connection a packet was processed
-            self.on_processed_packet(&processed_packet, subscriber)?;
+        if let Some((s, id)) = session_stuff {
+            self.space_manager.install_tls(id, s);
         }
+
+        // try to move the crypto state machine forward
+        self.update_crypto_state(datagram.timestamp, subscriber, datagram_endpoint)?;
+
+        // notify the connection a packet was processed
+        self.on_processed_packet(&packet, subscriber)?;
 
         Ok(())
     }

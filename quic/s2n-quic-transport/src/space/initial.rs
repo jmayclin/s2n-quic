@@ -94,7 +94,7 @@ pub struct InitialSpace<Config: endpoint::Config> {
     retry_token: Vec<u8>,
     processed_packet_numbers: SlidingWindow,
     recovery_manager: recovery::Manager<Config>,
-    tranport_configuration: TranportLimits<Config>,
+    pub tranport_configuration: TranportLimits<Config>,
 }
 
 impl<Config: endpoint::Config> fmt::Debug for InitialSpace<Config> {

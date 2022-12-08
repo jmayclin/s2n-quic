@@ -46,11 +46,9 @@ pub(crate) use application::ApplicationSpace;
 pub(crate) use crypto_stream::CryptoStream;
 pub(crate) use handshake::HandshakeSpace;
 pub(crate) use handshake_status::HandshakeStatus;
-pub(crate) use initial::InitialSpace;
+pub(crate) use initial::{InitialSpace, TranportLimits};
 pub(crate) use session_context::SessionContext;
 pub(crate) use tx_packet_numbers::TxPacketNumbers;
-
-use self::initial::TranportLimits;
 
 struct SessionInfo<Config: endpoint::Config> {
     session: <Config::TLSEndpoint as tls::Endpoint>::Session,
@@ -208,6 +206,17 @@ impl<Config: endpoint::Config> PacketSpaceManager<Config> {
             server_name: None,
             application_protocol: Bytes::new(),
         }
+    }
+
+    pub fn install_tls(
+        &mut self,
+        initial_cid: InitialId,
+        session: <Config::TLSEndpoint as tls::Endpoint>::Session,
+    ) {
+        self.session_info = Some(SessionInfo {
+            session,
+            initial_cid
+        })
     }
 
     packet_space_api!(InitialSpace<Config>, initial, initial_mut, discard_initial);
