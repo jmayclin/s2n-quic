@@ -50,6 +50,8 @@ pub(crate) use initial::InitialSpace;
 pub(crate) use session_context::SessionContext;
 pub(crate) use tx_packet_numbers::TxPacketNumbers;
 
+use self::initial::TranportLimits;
+
 struct SessionInfo<Config: endpoint::Config> {
     session: <Config::TLSEndpoint as tls::Endpoint>::Session,
     initial_cid: InitialId,
@@ -161,6 +163,43 @@ impl<Config: endpoint::Config> PacketSpaceManager<Config> {
                 header_key,
                 now,
                 ack_manager,
+                TranportLimits::Installed,
+            ))),
+            handshake: None,
+            application: None,
+            zero_rtt_crypto: None,
+            handshake_status: HandshakeStatus::default(),
+            server_name: None,
+            application_protocol: Bytes::new(),
+        }
+    }
+
+    pub fn new_no_session<Pub: event::ConnectionPublisher>(
+        initial_cid: InitialId,
+        session: <Config::TLSEndpoint as tls::Endpoint>::Session,
+        initial_key: <<Config::TLSEndpoint as tls::Endpoint>::Session as CryptoSuite>::InitialKey,
+        header_key: <<Config::TLSEndpoint as tls::Endpoint>::Session as CryptoSuite>::InitialHeaderKey,
+        now: Timestamp,
+        publisher: &mut Pub,
+    ) -> Self {
+        let ack_manager = AckManager::new(PacketNumberSpace::Initial, ack::Settings::EARLY);
+
+        publisher.on_key_update(event::builder::KeyUpdate {
+            key_type: event::builder::KeyType::Initial,
+            cipher_suite: initial_key.cipher_suite().into_event(),
+        });
+        Self {
+            session_info: Some(SessionInfo {
+                session,
+                initial_cid,
+            }),
+            retry_cid: None,
+            initial: Some(Box::new(InitialSpace::new(
+                initial_key,
+                header_key,
+                now,
+                ack_manager,
+                TranportLimits::Installed,
             ))),
             handshake: None,
             application: None,

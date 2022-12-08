@@ -14,21 +14,65 @@ use crate::{
 use core::{fmt, marker::PhantomData};
 use s2n_codec::EncoderBuffer;
 use s2n_quic_core::{
-    connection::PeerId,
+    connection::{InitialId, PeerId, limits::{Limiter, ConnectionInfo}},
     crypto::{tls, CryptoSuite, InitialKey},
     event::{self, ConnectionPublisher as _, IntoEvent},
     frame::{ack::AckRanges, crypto::CryptoRef, Ack, ConnectionClose},
-    inet::DatagramInfo,
+    inet::{DatagramInfo, SocketAddress},
     packet::{
         encoding::{PacketEncoder, PacketEncodingError},
         initial::{CleartextInitial, Initial, ProtectedInitial},
         number::{PacketNumber, PacketNumberRange, PacketNumberSpace, SlidingWindow},
     },
     time::{timer, Timestamp},
-    transport,
+    transport::{self, parameters::ServerTransportParameters},
 };
 use smallvec::SmallVec;
 
+pub struct UnconfiguredParameters<Config: endpoint::Config> {
+    transport_parameters: ServerTransportParameters,
+    connection_limits: Config::ConnectionLimits,
+    remote_address: SocketAddress,
+    initial_cid: InitialId,
+}
+
+pub struct ConfiguredParameters {
+    transport_parameters: ServerTransportParameters,
+    initial_cid: InitialId,
+}
+
+pub enum TranportLimits<Config: endpoint::Config> {
+    Initial(UnconfiguredParameters<Config>),
+    Configured((InitialId, ServerTransportParameters)),
+    Installed,
+}
+
+impl<Config: endpoint::Config> TranportLimits<Config> {
+    fn new(
+        transport_parameters: ServerTransportParameters,
+        connection_limits: Config::ConnectionLimits,
+        remote_address: SocketAddress,
+        initial_cid: InitialId,
+    ) -> Self {
+        let unconfiguration = UnconfiguredParameters {
+            transport_parameters,
+            connection_limits,
+            remote_address,
+            initial_cid,
+        };
+        TranportLimits::Initial(unconfiguration)
+    }
+
+    pub fn hydrate(self) -> Self {
+        if let TranportLimits::Initial(mut initial) = self {
+            let limits = initial.connection_limits.on_connection(&ConnectionInfo::new(&initial.remote_address));
+            initial.transport_parameters.load_limits(&limits);
+            TranportLimits::Configured((initial.initial_cid, initial.transport_parameters))
+        } else {
+            panic!("Oh god, the pain. Why would you do this to me. My life is agony.");
+        }
+    }
+}
 pub struct InitialSpace<Config: endpoint::Config> {
     pub ack_manager: AckManager,
     //= https://www.rfc-editor.org/rfc/rfc9001#section-4
@@ -50,6 +94,7 @@ pub struct InitialSpace<Config: endpoint::Config> {
     retry_token: Vec<u8>,
     processed_packet_numbers: SlidingWindow,
     recovery_manager: recovery::Manager<Config>,
+    tranport_configuration: TranportLimits<Config>,
 }
 
 impl<Config: endpoint::Config> fmt::Debug for InitialSpace<Config> {
@@ -69,6 +114,7 @@ impl<Config: endpoint::Config> InitialSpace<Config> {
         header_key: <<Config::TLSEndpoint as tls::Endpoint>::Session as CryptoSuite>::InitialHeaderKey,
         now: Timestamp,
         ack_manager: AckManager,
+        tranport_configuration: TranportLimits<Config>,
     ) -> Self {
         Self {
             ack_manager,
@@ -80,6 +126,7 @@ impl<Config: endpoint::Config> InitialSpace<Config> {
             retry_token: Vec::new(),
             processed_packet_numbers: SlidingWindow::default(),
             recovery_manager: recovery::Manager::new(PacketNumberSpace::Initial),
+            tranport_configuration,
         }
     }
 
