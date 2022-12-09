@@ -22,7 +22,7 @@ use s2n_quic_core::{
     packet::initial::ProtectedInitial,
     path::Handle as _,
     stateless_reset::token::Generator as _,
-    transport::{self, parameters::ServerTransportParameters},
+    transport::{self, parameters::ServerTransportParameters}, connection::Limits,
 };
 
 impl<Config: endpoint::Config> endpoint::Endpoint<Config> {
@@ -147,13 +147,13 @@ impl<Config: endpoint::Config> endpoint::Endpoint<Config> {
 
         let mut transport_parameters = ServerTransportParameters::default();
 
-        let limits = self
-            .config
-            .context()
-            .connection_limits
-            .on_connection(&LimitsInfo::new(&remote_address));
-
-        transport_parameters.load_limits(&limits);
+        //let limits = self
+        //    .config
+        //    .context()
+        //    .connection_limits
+        //    .on_connection(&LimitsInfo::new(&remote_address));
+        //
+        //transport_parameters.load_limits(&limits);
 
         //= https://www.rfc-editor.org/rfc/rfc9000#section-7.3
         //# A server includes the Destination Connection ID field from the first
@@ -209,9 +209,9 @@ impl<Config: endpoint::Config> endpoint::Endpoint<Config> {
             .try_into()
             .expect("Failed to convert max_datagram_frame_size");
 
-        let tls_session = endpoint_context
-            .tls
-            .new_server_session(&transport_parameters);
+        //let tls_session = endpoint_context
+        //    .tls
+        //    .new_server_session(&transport_parameters);
 
         let path_info = congestion_controller::PathInfo::new(&remote_address);
         let congestion_controller = endpoint_context
@@ -245,9 +245,12 @@ impl<Config: endpoint::Config> endpoint::Endpoint<Config> {
             &mut event_context,
         );
 
-        let space_manager = PacketSpaceManager::new(
+        println!("Creating the space manager without a session");
+        let space_manager = PacketSpaceManager::new_no_session(
             original_destination_connection_id,
-            tls_session,
+            endpoint_context.connection_limits.clone(),
+            transport_parameters,
+            *remote_address,
             initial_key,
             initial_header_key,
             datagram.timestamp,
@@ -270,7 +273,7 @@ impl<Config: endpoint::Config> endpoint::Endpoint<Config> {
             congestion_controller,
             timestamp: datagram.timestamp,
             quic_version,
-            limits,
+            limits: Limits::default(),
             max_mtu,
             event_context,
             supervisor_context: &supervisor_context,

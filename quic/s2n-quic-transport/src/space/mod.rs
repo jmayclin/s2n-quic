@@ -26,10 +26,10 @@ use s2n_quic_core::{
         NewConnectionId, NewToken, PathChallenge, PathResponse, ResetStream, RetireConnectionId,
         StopSending, StreamDataBlocked, StreamsBlocked,
     },
-    inet::DatagramInfo,
+    inet::{DatagramInfo, SocketAddress},
     packet::number::{PacketNumber, PacketNumberSpace},
     time::{timer, Timestamp},
-    transport,
+    transport::{self, parameters::ServerTransportParameters},
 };
 
 mod application;
@@ -49,6 +49,8 @@ pub(crate) use handshake_status::HandshakeStatus;
 pub(crate) use initial::{InitialSpace, TranportLimits};
 pub(crate) use session_context::SessionContext;
 pub(crate) use tx_packet_numbers::TxPacketNumbers;
+
+use self::initial::UnconfiguredParameters;
 
 struct SessionInfo<Config: endpoint::Config> {
     session: <Config::TLSEndpoint as tls::Endpoint>::Session,
@@ -174,7 +176,10 @@ impl<Config: endpoint::Config> PacketSpaceManager<Config> {
 
     pub fn new_no_session<Pub: event::ConnectionPublisher>(
         initial_cid: InitialId,
-        session: <Config::TLSEndpoint as tls::Endpoint>::Session,
+        //session: <Config::TLSEndpoint as tls::Endpoint>::Session,
+        connection_limits: Config::ConnectionLimits,
+        transport_parameters: ServerTransportParameters,
+        remote_address: SocketAddress,
         initial_key: <<Config::TLSEndpoint as tls::Endpoint>::Session as CryptoSuite>::InitialKey,
         header_key: <<Config::TLSEndpoint as tls::Endpoint>::Session as CryptoSuite>::InitialHeaderKey,
         now: Timestamp,
@@ -186,18 +191,22 @@ impl<Config: endpoint::Config> PacketSpaceManager<Config> {
             key_type: event::builder::KeyType::Initial,
             cipher_suite: initial_key.cipher_suite().into_event(),
         });
+        let unconfed_params = UnconfiguredParameters {
+            transport_parameters,
+            remote_address,
+            initial_cid,
+            connection_limits,
+        };
+        let params_enum = TranportLimits::Initial(unconfed_params);
         Self {
-            session_info: Some(SessionInfo {
-                session,
-                initial_cid,
-            }),
+            session_info: None,
             retry_cid: None,
             initial: Some(Box::new(InitialSpace::new(
                 initial_key,
                 header_key,
                 now,
                 ack_manager,
-                TranportLimits::Installed,
+                params_enum,
             ))),
             handshake: None,
             application: None,

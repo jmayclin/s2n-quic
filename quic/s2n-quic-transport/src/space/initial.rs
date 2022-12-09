@@ -14,7 +14,7 @@ use crate::{
 use core::{fmt, marker::PhantomData};
 use s2n_codec::EncoderBuffer;
 use s2n_quic_core::{
-    connection::{InitialId, PeerId, limits::{Limiter, ConnectionInfo}},
+    connection::{InitialId, PeerId, limits::{Limiter, ConnectionInfo}, Limits},
     crypto::{tls, CryptoSuite, InitialKey},
     event::{self, ConnectionPublisher as _, IntoEvent},
     frame::{ack::AckRanges, crypto::CryptoRef, Ack, ConnectionClose},
@@ -29,11 +29,12 @@ use s2n_quic_core::{
 };
 use smallvec::SmallVec;
 
+// make a constructor so that these can be private
 pub struct UnconfiguredParameters<Config: endpoint::Config> {
-    transport_parameters: ServerTransportParameters,
-    connection_limits: Config::ConnectionLimits,
-    remote_address: SocketAddress,
-    initial_cid: InitialId,
+    pub transport_parameters: ServerTransportParameters,
+    pub connection_limits: Config::ConnectionLimits,
+    pub remote_address: SocketAddress,
+    pub initial_cid: InitialId,
 }
 
 pub struct ConfiguredParameters {
@@ -43,7 +44,7 @@ pub struct ConfiguredParameters {
 
 pub enum TranportLimits<Config: endpoint::Config> {
     Initial(UnconfiguredParameters<Config>),
-    Configured((InitialId, ServerTransportParameters)),
+    Configured((InitialId, ServerTransportParameters, Limits)),
     Installed,
 }
 
@@ -64,14 +65,19 @@ impl<Config: endpoint::Config> TranportLimits<Config> {
     }
 
     pub fn hydrate(self) -> Self {
-        if let TranportLimits::Initial(mut initial) = self {
-            let limits = initial.connection_limits.on_connection(&ConnectionInfo::new(&initial.remote_address));
-            initial.transport_parameters.load_limits(&limits);
-            TranportLimits::Configured((initial.initial_cid, initial.transport_parameters))
-        } else {
-            panic!("Oh god, the pain. Why would you do this to me. My life is agony.");
-        }
+        let (initial_id, tranport_params, limits) = match self {
+            TranportLimits::Initial(mut initial) => {
+                let limits = initial.connection_limits.on_connection(&ConnectionInfo::new(&initial.remote_address));
+                initial.transport_parameters.load_limits(&limits);
+                (initial.initial_cid, initial.transport_parameters, limits)
+            },
+            _ => {
+                panic!("Oh god, the pain. Why would you do this to me. My life is agony.");
+            }
+        };
+        TranportLimits::Configured((initial_id, tranport_params, limits))
     }
+
 }
 pub struct InitialSpace<Config: endpoint::Config> {
     pub ack_manager: AckManager,
@@ -486,10 +492,18 @@ impl<Config: endpoint::Config> InitialSpace<Config> {
         &mut self,
         publisher: &mut Pub,
     ) -> Result<(), transport::Error> {
+        println!("parsing the client hello here");
         debug_assert!(Config::ENDPOINT_TYPE.is_server());
         if let Some(payload) = self.parse_hello(tls::HandshakeType::ClientHello)? {
             publisher.on_tls_client_hello(event::builder::TlsClientHello { payload: &payload });
         }
+        // just can't modify this inside the if
+        let mut container = TranportLimits::Installed;
+        std::mem::swap(&mut self.tranport_configuration, &mut container);
+        container = container.hydrate();
+        self.tranport_configuration = container;
+        //self.tranport_configuration =;
+        //self.tranport_configuration = self.tranport_configuration.hydrate();
         Ok(())
     }
 

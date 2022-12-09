@@ -1233,10 +1233,14 @@ impl<Config: endpoint::Config> connection::Trait for ConnectionImpl<Config> {
         tls_endpoint: &mut Config::TLSEndpoint,
     ) -> Result<(), ProcessingError> {
         //let mut tls_session = Option::None;
+        println!("handle cleartext initial packet");
         let (packet, session_stuff) = {
             let (space, handshake_status) = match self.space_manager.initial_mut() {
                 Some((s, hs)) => (s, hs),
-                None => return Ok(()),
+                None => {
+                    println!("exiting bc initial space not there");
+                    return Ok(());
+                },
             };
             let mut publisher = self.event_context.publisher(datagram.timestamp, subscriber);
 
@@ -1270,17 +1274,21 @@ impl<Config: endpoint::Config> connection::Trait for ConnectionImpl<Config> {
                 packet_interceptor,
             )?;
 
-            if let TranportLimits::Configured((id, params)) = space.tranport_configuration {
+            if let TranportLimits::Configured((id, params, limits)) = space.tranport_configuration {
+                println!("creating the tls session");
                 let tls_session = tls_endpoint.new_server_session(&params);
                 space.tranport_configuration = TranportLimits::Installed;
-                (processed_packet, Option::Some((tls_session, id)))
+                (processed_packet, Option::Some((tls_session, id, limits)))
             } else {
                 (processed_packet, Option::None)
             }
         };
 
-        if let Some((s, id)) = session_stuff {
+        if let Some((s, id, limits)) = session_stuff {
+            println!("I am doing a session install");
             self.space_manager.install_tls(id, s);
+            println!("updating the connection limits");
+            self.limits = limits;
         }
 
         // try to move the crypto state machine forward
