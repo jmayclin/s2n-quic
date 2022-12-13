@@ -58,7 +58,9 @@ struct SessionInfo<Config: endpoint::Config> {
 }
 
 pub struct PacketSpaceManager<Config: endpoint::Config> {
-    session_info: Option<SessionInfo<Config>>,
+    session: Option<<Config::TLSEndpoint as tls::Endpoint>::Session>,
+    initial_cid: Option<InitialId>,
+    //session_info: Option<SessionInfo<Config>>,
     retry_cid: Option<Box<PeerId>>,
     initial: Option<Box<InitialSpace<Config>>>,
     handshake: Option<Box<HandshakeSpace<Config>>>,
@@ -153,10 +155,8 @@ impl<Config: endpoint::Config> PacketSpaceManager<Config> {
             cipher_suite: initial_key.cipher_suite().into_event(),
         });
         Self {
-            session_info: Some(SessionInfo {
-                session,
-                initial_cid,
-            }),
+            session: Some(session),
+            initial_cid: Some(initial_cid),
             retry_cid: None,
             initial: Some(Box::new(InitialSpace::new(
                 initial_key,
@@ -194,12 +194,12 @@ impl<Config: endpoint::Config> PacketSpaceManager<Config> {
         let unconfed_params = UnconfiguredParameters {
             transport_parameters,
             remote_address,
-            initial_cid,
             connection_limits,
         };
         let params_enum = TranportLimits::Initial(unconfed_params);
         Self {
-            session_info: None,
+            session: None,
+            initial_cid: Some(initial_cid),
             retry_cid: None,
             initial: Some(Box::new(InitialSpace::new(
                 initial_key,
@@ -219,13 +219,9 @@ impl<Config: endpoint::Config> PacketSpaceManager<Config> {
 
     pub fn install_tls(
         &mut self,
-        initial_cid: InitialId,
         session: <Config::TLSEndpoint as tls::Endpoint>::Session,
     ) {
-        self.session_info = Some(SessionInfo {
-            session,
-            initial_cid
-        })
+        self.session = Some(session);
     }
 
     packet_space_api!(InitialSpace<Config>, initial, initial_mut, discard_initial);
@@ -262,10 +258,11 @@ impl<Config: endpoint::Config> PacketSpaceManager<Config> {
         publisher: &mut Pub,
         datagram: &mut Config::DatagramEndpoint,
     ) -> Poll<Result<(), transport::Error>> {
-        if let Some(session_info) = self.session_info.as_mut() {
+        // handle the noneness of id
+        if let Some(session) = self.session.as_mut() {
             let mut context: SessionContext<Config, Pub> = SessionContext {
                 now,
-                initial_cid: &session_info.initial_cid,
+                initial_cid: &self.initial_cid.unwrap(),
                 retry_cid: self.retry_cid.as_deref(),
                 initial: &mut self.initial,
                 handshake: &mut self.handshake,
@@ -282,10 +279,11 @@ impl<Config: endpoint::Config> PacketSpaceManager<Config> {
                 datagram,
             };
 
-            match session_info.session.poll(&mut context)? {
+            match session.poll(&mut context)? {
                 Poll::Ready(_success) => {
                     // The TLS session and retry_cid is no longer needed
-                    self.session_info = None;
+                    self.session = None;
+                    self.initial_cid = None;
                     self.retry_cid = None;
                 }
                 Poll::Pending => return Poll::Pending,
@@ -477,7 +475,8 @@ impl<Config: endpoint::Config> PacketSpaceManager<Config> {
         path_id: path::Id,
         publisher: &mut Pub,
     ) {
-        self.session_info = None;
+        self.session = None;
+        self.initial_cid = None;
         self.retry_cid = None;
         self.discard_initial(path, path_id, publisher);
         self.discard_handshake(path, path_id, publisher);

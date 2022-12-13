@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{application::ServerName, crypto::CryptoSuite, transport};
+use bytes::Buf;
 pub use bytes::{Bytes, BytesMut};
 use core::{
     convert::TryFrom,
@@ -326,85 +327,120 @@ pub struct Extension {
     pub flavor: ExtensionType,
     payload: Vec<u8>,
 }
+
+pub struct NonContiguousBuffer<'a> {
+    slices: &'a [&'a [u8]],
+    slice: usize,
+    byte: usize,
+}
+
+impl<'a> NonContiguousBuffer<'a> {
+    fn new(chunks: &'a [&'a [u8]]) -> Self {
+        NonContiguousBuffer {
+            slices: chunks,
+            slice: 0,
+            byte: 0,
+        }
+    }
+}
+
+impl<'a> bytes::buf::Buf for NonContiguousBuffer<'a> {
+    fn remaining(&self) -> usize {
+        if self.slice == self.slices.len() {
+            return 0;
+        }
+        // add the rest of the bytes
+        let mut remaining = 0;
+        remaining += self.slices[self.slice][self.byte..].len();
+        for i in (self.slice + 1)..(self.slices.len()) {
+            remaining += self.slices[i].len();
+        }
+        remaining
+    }
+
+    fn chunk(&self) -> &[u8] {
+        if self.slice == self.slices.len() {
+            return &[];
+        }
+        // does this internally call the advance thing to deal with noncontiguous?
+        // when does this return the empty slice.
+        &self.slices[self.slice][self.byte..]
+    }
+
+    fn advance(&mut self, mut cnt: usize) {
+        // maybe consume from multiple slices
+        while cnt != 0 {
+            let remaining_in_slice = self.slices[self.slice].len() - self.byte;
+            if remaining_in_slice >= cnt {
+                self.byte += cnt;
+                // check if end of slice
+                if self.byte == self.slices[self.slice].len() {
+                    self.slice += 1;
+                    self.byte = 0;
+                }
+                break;
+            } else {
+                // consume the rest of the current slice
+                cnt -= remaining_in_slice;
+                self.slice += 1;
+                self.byte = 0;
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ClientHello {
-    protocol_version: u16,
-    random: [u8; 32],
-    legacy_session_id: Vec<u8>, // single field
-    cipher_suites: Vec<CipherSuite>,
-    legacy_compression_method: Vec<u8>, // single field
-    pub extensions: Vec<Extension>,
+    pub sni: Option<Bytes>,
+    pub alpn: Option<Bytes>,
 }
 
 impl ClientHello {
-    pub fn from_bytes(payload: Vec<u8>) -> Self {
-        let mut read = 0;
-        let version: u16 = ((payload[0] as u16) << 8) + payload[1] as u16;
-        read += 2;
-        let random: [u8; 32] = payload[read..(read + 32)].try_into().unwrap();
-        read += 32;
-        let session_length = payload[read];
-        read += 1;
-        println!("Session length is {}", session_length);
-        let mut session_id: Vec<u8> = Vec::new();
-        session_id.extend_from_slice(&payload[read..(read + session_length as usize)]);
-        read += session_length as usize;
+    const ALPN_TAG: u16 = 16;
+    const SNI_TAG: u16 = 0;
 
-        let cipher_suite_length: u16 = Self::to_16(payload[read], payload[read + 1]); //((payload[read] as u16) << 8) + payload[read + 1] as u16;
-        read += 2;
-        let mut cipher_suites: Vec<CipherSuite> = Vec::new();
-        for i in 0..(cipher_suite_length / 2) {
-            cipher_suites.push(Self::to_16(payload[read], payload[read + 1]).into());
-            read += 2;
-        }
-        //read += cipher_suite_length as usize;
+    pub fn from_bytes(payload: &[&[u8]]) -> Self {
+        let mut buffer = NonContiguousBuffer::new(payload);
 
-        let compression_length = payload[read];
-        read += 1;
-        read += compression_length as usize;
-        let extension_length = Self::to_16(payload[read], payload[read + 1]);
-        read += 2;
-        println!("Extension length is {}", extension_length);
-        let mut extensions = Vec::new();
-        while read < payload.len() {
-            let extension_type = Self::to_16(payload[read], payload[read + 1]);
-            read += 2;
-            let extension_enum: Result<ExtensionType, ()> = extension_type.try_into();
-            println!("{} extension type is {:?} ", extension_type, extension_enum);
-            let extension_payload_length = Self::to_16(payload[read], payload[read + 1]);
-            read += 2;
-            let mut extension_payload = Vec::new();
-            extension_payload.extend_from_slice(&payload[read..(read + extension_payload_length as usize)]);
-            let extension = Extension {
-                flavor: extension_enum.unwrap(),
-                payload: extension_payload,
-            };
-            read += extension_payload_length as usize;
-            extensions.push(extension);
+        buffer.advance(2); // legacy_version
+        buffer.advance(32); // random
+        println!("read in legacy version and random");
+
+        let session_length = buffer.get_u8();
+        buffer.advance(session_length as usize);
+
+        let cipher_suite_length: u16 = buffer.get_u16();
+        buffer.advance(cipher_suite_length as usize);
+
+        let compression_length = buffer.get_u8();
+        buffer.advance(compression_length as usize);
+        println!("starting extension stuff");
+        let extension_length = buffer.get_u16();
+
+
+        // now looking at the alpn (16) and maybe sni (0)
+        let mut sni = Option::None;
+        let mut alpn = Option::None;
+        while buffer.has_remaining() {
+            let extension_type = buffer.get_u16();
+            let extension_payload_length = buffer.get_u16();
+            println!("Ext:{}, Length: {}", extension_type, extension_payload_length);
+            if extension_type == Self::ALPN_TAG {
+                alpn = Some(buffer.copy_to_bytes(extension_payload_length as usize))
+            } else if extension_type == Self::SNI_TAG {
+                sni = Some(buffer.copy_to_bytes(extension_payload_length as usize))
+            } else {
+                buffer.advance(extension_payload_length as usize);
+            }
         }
-        ClientHello {
-            protocol_version: version,
-            random,
-            legacy_session_id: session_id,
-            cipher_suites,
-            legacy_compression_method: Vec::new(),
-            extensions: extensions,
-        }
+        ClientHello { sni, alpn }
     }
 
-    fn to_16(b1: u8, b2: u8) -> u16 {
-        ((b1 as u16) << 8) + b2 as u16
+    pub fn sni(&self) -> Option<Bytes> {
+        return self.sni.clone();
     }
 
-    pub fn get_servername(extension: &Extension) -> String {
-        if let ExtensionType::server_name = extension.flavor {
-            extension.payload.iter()
-                .cloned()
-                .map(|b| b as char)
-                .map(|c| if c.is_ascii() {c} else {'?'})
-                .collect()
-        } else {
-            panic!();
-        }
+    pub fn alpn(&self) -> Option<Bytes> {
+        return self.alpn.clone();
     }
 }

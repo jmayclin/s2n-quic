@@ -1273,22 +1273,41 @@ impl<Config: endpoint::Config> connection::Trait for ConnectionImpl<Config> {
                 &mut publisher,
                 packet_interceptor,
             )?;
-
-            if let TranportLimits::Configured((id, params, limits)) = space.tranport_configuration {
-                println!("creating the tls session");
+            // I really hate this
+            if let TranportLimits::Configured(_) = &mut space.tranport_configuration {
+                let tl = std::mem::replace(&mut space.tranport_configuration, TranportLimits::Installed);
+                let (params, limits, ch) = match tl {
+                    TranportLimits::Configured((params, limits, ch)) => (params, limits, ch),
+                    _ => {panic!("tranport limits are wrong");}
+                };
+                //println!("creating the tls session");
                 let tls_session = tls_endpoint.new_server_session(&params);
                 space.tranport_configuration = TranportLimits::Installed;
-                (processed_packet, Option::Some((tls_session, id, limits)))
+
+                (processed_packet, Option::Some((tls_session, limits, ch)))
             } else {
                 (processed_packet, Option::None)
             }
         };
 
-        if let Some((s, id, limits)) = session_stuff {
+        if let Some((s, limits, ch)) = session_stuff {
             println!("I am doing a session install");
-            self.space_manager.install_tls(id, s);
+            self.space_manager.install_tls(s);
+
             println!("updating the connection limits");
             self.limits = limits;
+
+            println!("updating alpn and sni stuff");
+            if let Some(bytes) = ch.alpn {
+                self.space_manager.application_protocol = bytes;
+            }
+            if let Some(bytes) = ch.sni {
+                let option_str = std::str::from_utf8(&bytes);
+                println!("tried to convert to a string and {:?}", option_str);
+                if let Ok(s) = std::str::from_utf8(&bytes) {
+                    self.space_manager.server_name = Some(ServerName::from(s));
+                }
+            }
         }
 
         // try to move the crypto state machine forward

@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use bytes::Bytes;
+
 use crate::{
     ack,
     event::{api::SocketAddress, IntoEvent},
@@ -10,7 +12,7 @@ use crate::{
         InitialMaxStreamDataBidiLocal, InitialMaxStreamDataBidiRemote, InitialMaxStreamDataUni,
         InitialMaxStreamsBidi, InitialMaxStreamsUni, InitialStreamLimits, MaxAckDelay,
         MaxDatagramFrameSize, MaxIdleTimeout, TransportParameters,
-    },
+    }, crypto::tls::ClientHello,
 };
 use core::{convert::TryInto, time::Duration};
 
@@ -32,14 +34,28 @@ const MAX_KEEP_ALIVE_PERIOD_DEFAULT: Duration = Duration::from_secs(30);
 #[derive(Debug)]
 pub struct ConnectionInfo<'a> {
     pub remote_address: SocketAddress<'a>,
+    pub server_name: Option<Bytes>,
+    pub alpn: Option<Bytes>
 }
 
 impl<'a> ConnectionInfo<'a> {
     #[inline]
     #[doc(hidden)]
+    pub fn new_with_client_hello(remote_address: &'a inet::SocketAddress, ch: &ClientHello) -> Self {
+        Self {
+            remote_address: remote_address.into_event(),
+            server_name: ch.sni(),
+            alpn: ch.alpn(),
+        }
+    }
+
+    #[inline]
+    #[doc(hidden)]
     pub fn new(remote_address: &'a inet::SocketAddress) -> Self {
         Self {
             remote_address: remote_address.into_event(),
+            server_name: Option::None,
+            alpn: Option::None,
         }
     }
 }
