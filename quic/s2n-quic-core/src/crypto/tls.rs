@@ -395,6 +395,9 @@ pub struct ClientHello {
     pub alpn: Option<Bytes>,
 }
 
+// need to move this to a non-panicing interface. Separate out a trait for Decoder Buffer?
+// Probably don't want a constructor that can fail.
+// new() -> Self, populate -> Result<()> ?
 impl ClientHello {
     const ALPN_TAG: u16 = 16;
     const SNI_TAG: u16 = 0;
@@ -404,7 +407,6 @@ impl ClientHello {
 
         buffer.advance(2); // legacy_version
         buffer.advance(32); // random
-        println!("read in legacy version and random");
 
         let session_length = buffer.get_u8();
         buffer.advance(session_length as usize);
@@ -414,9 +416,8 @@ impl ClientHello {
 
         let compression_length = buffer.get_u8();
         buffer.advance(compression_length as usize);
-        println!("starting extension stuff");
-        let extension_length = buffer.get_u16();
 
+        let extension_length = buffer.get_u16();
 
         // now looking at the alpn (16) and maybe sni (0)
         let mut sni = Option::None;
@@ -428,7 +429,10 @@ impl ClientHello {
             if extension_type == Self::ALPN_TAG {
                 alpn = Some(buffer.copy_to_bytes(extension_payload_length as usize))
             } else if extension_type == Self::SNI_TAG {
-                sni = Some(buffer.copy_to_bytes(extension_payload_length as usize))
+                let server_name_list_length = buffer.get_u16();
+                let name_type = buffer.get_u8();
+                let host_name_length = buffer.get_u16();
+                sni = Some(buffer.copy_to_bytes(host_name_length as usize))
             } else {
                 buffer.advance(extension_payload_length as usize);
             }

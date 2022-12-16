@@ -177,3 +177,50 @@ impl rustls::server::ResolvesServerCert for AlwaysResolvesChain {
         Some(Arc::clone(&self.0))
     }
 }
+
+// private types made this tedious
+pub struct SometimesResolvesChain(
+    (
+        Arc<rustls::sign::CertifiedKey>,
+        Arc<rustls::sign::CertifiedKey>,
+    ),
+);
+
+impl SometimesResolvesChain {
+    pub fn new(
+        chain_default: certificate::Certificate,
+        priv_key_default: certificate::PrivateKey,
+        chain_fancy: certificate::Certificate,
+        priv_key_fancy: certificate::PrivateKey,
+    ) -> Result<Self, rustls::Error> {
+        let key_default = rustls::sign::any_supported_type(&priv_key_default.0)
+            .map_err(|_| rustls::Error::General("invalid private key".into()))?;
+        let key_fancy = rustls::sign::any_supported_type(&priv_key_fancy.0)
+            .map_err(|_| rustls::Error::General("invalid private key".into()))?;
+        Ok(Self((
+            Arc::new(rustls::sign::CertifiedKey::new(
+                chain_default.0,
+                key_default,
+            )),
+            Arc::new(rustls::sign::CertifiedKey::new(
+                chain_fancy.0,
+                key_fancy,
+            )),
+        )))
+    }
+}
+
+impl rustls::server::ResolvesServerCert for SometimesResolvesChain {
+    fn resolve(
+        &self,
+        client_hello: rustls::server::ClientHello,
+    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+        if let Some(sni) = client_hello.server_name() {
+            if sni == "gimme.moar.bandwidth" {
+                println!("returning the mega special certificate");
+                return Some(Arc::clone(&self.0 .1));
+            }
+        }
+        Some(Arc::clone(&self.0 .0))
+    }
+}

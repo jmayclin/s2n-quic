@@ -3,10 +3,10 @@
 
 use crate::{certificate, encode_transport_parameters, session::Session};
 use core::convert::TryFrom;
-use rustls::{quic, ClientConfig};
+use rustls::{quic, ClientConfig, client::{DangerousClientConfig, ServerCertVerifier, ServerCertVerified}, Error, Certificate};
 use s2n_codec::EncoderValue;
 use s2n_quic_core::{application::ServerName, crypto::tls};
-use std::sync::Arc;
+use std::{sync::Arc, time::SystemTime};
 
 pub struct Client {
     config: Arc<ClientConfig>,
@@ -156,7 +156,27 @@ impl Builder {
         if let Some(key_log) = self.key_log {
             config.key_log = key_log;
         }
+        let mut dangerous_configuration = DangerousClientConfig{ cfg: &mut config};
+        let overzealous_verifier = AllServerCertVerifier;
+        dangerous_configuration.set_certificate_verifier(Arc::new(overzealous_verifier));
 
         Ok(Client::new(config))
+    }
+}
+
+struct AllServerCertVerifier;
+
+impl ServerCertVerifier for AllServerCertVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &Certificate,
+        intermediates: &[Certificate],
+        server_name: &rustls::ServerName,
+        scts: &mut dyn Iterator<Item = &[u8]>,
+        ocsp_response: &[u8],
+        now: SystemTime,
+    ) -> Result<ServerCertVerified, Error> {
+        let yes = ServerCertVerified::assertion();
+        Ok(yes)
     }
 }

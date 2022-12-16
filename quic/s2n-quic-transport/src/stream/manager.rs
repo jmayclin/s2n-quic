@@ -426,6 +426,7 @@ impl<S: StreamTrait> AbstractStreamManager<S> {
         initial_local_limits: InitialFlowControlLimits,
         initial_peer_limits: InitialFlowControlLimits,
     ) -> Self {
+        println!("The peer connection limits set a data window of {:?}", initial_peer_limits.max_data);
         debug_assert!(
             initial_local_limits.max_data <= VarInt::from_u32(core::u32::MAX),
             "Receive window must not exceed 32bit range"
