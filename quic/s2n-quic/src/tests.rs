@@ -14,13 +14,18 @@ use std::time::Duration;
 
 mod setup;
 use bytes::Bytes;
-use s2n_quic_platform::io::testing::primary;
+use s2n_quic_platform::io::testing::{primary, TxRecorder};
 use setup::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[test]
 fn client_server_test() {
-    test(Model::default(), client_server).unwrap();
+    let recorder = TxRecorder::default();
+    let recorded_packets = recorder.get_packets();
+    test((recorder, Model::default()), client_server).unwrap();
+    println!("did the test, now checking the packets");
+    let packets = recorded_packets.lock().unwrap();
+    println!("this many packets: {}", packets.len());
 }
 
 fn blackhole(model: Model, blackhole_duration: Duration) {

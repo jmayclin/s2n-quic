@@ -17,6 +17,7 @@ mod model;
 pub mod network;
 pub mod time;
 
+pub use model::TxRecorder;
 pub use model::Model;
 pub use network::{Network, PathHandle};
 pub use time::now;

@@ -8,9 +8,36 @@ use std::{
     borrow::Cow,
     sync::{
         atomic::{AtomicU16, AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
+
+#[derive(Clone, Default)]
+pub struct TxRecorder {
+    packets: Arc<Mutex<Vec<Packet>>>
+}
+
+impl TxRecorder {
+    pub fn count_packets(&self) -> usize {
+        self.packets.lock().unwrap().len()
+    }
+
+    pub fn get_packets(&self) -> Arc<Mutex<Vec<Packet>>> {
+        self.packets.clone()
+    }
+}
+
+impl Network for TxRecorder {
+    fn execute(&mut self, buffers: &Buffers) -> usize {
+        println!("recorder executing");
+        let mut packets = self.packets.lock().unwrap();
+        buffers.pending_transmissions(|packet| {
+            packets.push(packet.clone());
+            Ok(())
+        });
+        0
+    }
+}
 
 #[derive(Clone, Default)]
 pub struct Model(Arc<State>);
@@ -179,6 +206,8 @@ struct State {
     inflight_delay: AtomicU64,
     inflight_delay_threshold: AtomicU64,
     current_inflight: AtomicU64,
+    tx_packets: Option<Vec<Packet>>,
+    rx_packets: Option<Vec<Packet>>,
 }
 
 impl Default for State {
@@ -196,12 +225,15 @@ impl Default for State {
             inflight_delay: AtomicU64::new(0),
             inflight_delay_threshold: AtomicU64::new(u64::MAX),
             current_inflight: AtomicU64::new(0),
+            tx_packets: None,
+            rx_packets: None,
         }
     }
 }
 
 impl Network for Model {
     fn execute(&mut self, buffers: &Buffers) -> usize {
+        println!("model executing");
         let jitter = self.jitter();
         let network_jitter = self.network_jitter();
         let transmit_rate = self.transmit_rate();
@@ -288,8 +320,8 @@ impl Network for Model {
                     super::time::delay_until(transmit_time).await;
                 }
 
+                model.0.current_inflight.fetch_sub(1, Ordering::SeqCst);
                 buffers.rx(*packet.path.local_address, |queue| {
-                    model.0.current_inflight.fetch_sub(1, Ordering::SeqCst);
                     queue.receive(packet);
                 });
             });
