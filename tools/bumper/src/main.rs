@@ -38,23 +38,10 @@ async fn main() {
 
     println!("successfully parsd the dependency graph: {:?}", dep_graph);
 
+    let (version, commit) = get_release().await;
 
-    println!("Hello, world!");
-    let octocrab = octocrab::instance();
+    println!("version: {:?}, commit: {:?}", version, commit);
 
-    let page = octocrab
-        .repos("aws", "s2n-quic")
-        .releases()
-        .get_latest()
-        .await
-        .unwrap();
-    println!("{:?}", page);
-    let version = page.tag_name;
-    let commit = page.target_commitish;
-    println!(
-        "the version (tag) is {:?} and the commit is {:?}",
-        version, commit
-    );
     // get the previous release commit from github and release version
 
     // check that that is the version that we are currently on, otherwise there
@@ -110,4 +97,19 @@ fn get_dependencies(name: &str, interest_list: &Vec<&str>) -> Vec<String> {
     .filter(|(_depth, name)| interest_list.contains(name))
     .map(|(_depth, name)| name.to_owned())
     .collect()
+}
+
+async fn get_release() -> (String, String) {
+    return ("v1.17.1".to_owned(), "a6c8fbe52596564d632343e7cb4969954a1098ff".to_owned());
+    let octocrab = octocrab::instance();
+
+    let page = octocrab
+        .repos("aws", "s2n-quic")
+        .releases()
+        .get_latest()
+        .await
+        .unwrap();
+    let version = page.tag_name;
+    let commit = page.target_commitish;
+    (version, commit)
 }
