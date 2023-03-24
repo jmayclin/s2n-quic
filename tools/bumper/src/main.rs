@@ -101,12 +101,14 @@ async fn main() {
     let feat_files = commits
         .iter()
         .filter(|(_hash, description)| description.starts_with("feat"))
+        .inspect(|(_hash, description)| println!("feature commit found: {description}"))
         .map(|(hash, _desciption)| get_changed_files(hash))
         .flatten()
         .collect::<HashSet<String>>()
         .into_iter()
         .collect();
     let changed_crates: Vec<String> = get_changed_crates(feat_files, &crates);
+    println!("feature crates: {:?}", changed_crates);
 
     for release_crate in changed_crates {
         bumps.insert(release_crate, Bump::MINOR);
