@@ -1,6 +1,13 @@
-use std::{collections::{HashMap, HashSet}, process::Command};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    process::Command,
+    str::FromStr, fmt::Display,
+};
 
-#[derive(Debug)]
+use cargo_toml::{Manifest, Inheritable, Dependency};
+
+#[derive(Copy, Clone, Debug)]
 enum Bump {
     PATCH,
     MINOR,
@@ -8,6 +15,44 @@ enum Bump {
     // they are rare enough and high risk enough that
     // a human should explicitly be in the loop on them
     //MAJOR
+}
+
+#[derive(Debug, Clone)]
+struct Version {
+    major: u64,
+    minor: u64,
+    patch: u64,
+}
+
+impl FromStr for Version {
+    type Err = Box<dyn Error>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut tokens = s.split('.');
+        let major = tokens.next().unwrap().parse()?;
+        let minor = tokens.next().unwrap().parse()?;
+        let patch = tokens.next().unwrap().parse()?;
+        Ok(Version {
+            major,
+            minor,
+            patch,
+        })
+    }
+}
+
+impl Display for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+impl Version {
+    fn bump(&mut self, bump: Bump) {
+        match bump {
+            PATCH => {self.patch += 1},
+            MINOR => {self.minor += 1},
+        };
+    }
 }
 
 #[tokio::main]
@@ -106,14 +151,17 @@ async fn main() {
             // if a crate is going to have a version bump, then all of the
             // consumers must have at least a patch bump
             if bumps.contains_key(*release_crate) {
-                let consumers = dep_graph.get(*release_crate).unwrap();
+                let consumers = match dep_graph.get(*release_crate) {
+                    Some(c) => c,
+                    None => continue,
+                };
+                // might not have any consumers, in which case skip
                 for consumer in consumers {
-                    if ! bumps.contains_key(consumer) {
+                    if !bumps.contains_key(consumer) {
                         change = true;
                         bumps.insert(consumer.clone(), Bump::PATCH);
                     }
                 }
-
             }
         }
 
@@ -122,16 +170,54 @@ async fn main() {
         }
     }
 
-    // read in the current versions
-    // parse the cargo tomls
-    // looks the current versions
-    // figure out the new versions
+    let toml = cargo_toml::Manifest::from_path("./quic/s2n-quic-core/Cargo.toml").unwrap();
+    println!("{:?}", toml);
+    let md = toml.package();
+    println!("package metadata");
+    println!("{:?}", md);
+    let version = md.version();
+    println!("crate version is {:?}", version);
+    println!("crate build deps: {:?}", toml.dependencies);
 
-    // update the main crate versions
+    let mut versions = HashMap::new();
+    let mut manifests = HashMap::new();
+    for c in crates.iter() {
+        let manifest_path = format!("{c}/Cargo.toml");
+        let manifest_string = std::fs::read_to_string(&manifest_path).unwrap();
+        let manifest = Manifest::from_path(&manifest_path).unwrap();
+        let version: Version = manifest.package().version().parse().unwrap();
+        manifests.insert(*c, manifest_string);
+        versions.insert((*c).to_owned(), version);
+    }
 
-    // update the dependency specifications
+    println!("parsed versions: {:?}", versions);
+
+    // update the version for each crate
+    //for (c, manifest) in manifests.iter_mut() {
+    //    let new_version = versions.get(c).unwrap();
+    //    let package = manifest.package.as_mut().unwrap();
+    //    package.version = Inheritable::Set(new_version.to_string());
+    //
+    //    // update the dependencies
+    //    let deps = &mut manifest.dependencies;
+    //    for (crate_path, _bump) in versions.iter() {
+    //        let crate_name = crate_name_from_path(crate_path);
+    //            if let Some(dep) = deps.get_mut(crate_name) {
+    //                if let Dependency::Detailed(detail) = dep {
+    //                    let dep_version = versions.get(crate_path).unwrap();
+    //                    detail.version = Some(format!("={}", dep_version));
+    //                } else {
+    //                    panic!("I was not prepared for this");
+    //                }
+    //            }
+    //    }
+    //}
 
     // rewrite the Cargo.toml files
+    let manifest = manifests.get("quic/s2n-quic-core").unwrap();
+    let manifest_str = toml::to_string(manifest).unwrap();
+    println!("manifest string is {}", manifest_str);
+
 
     // just figure out what has had the feature release.
     // if it hasn't had a feature release, figure out what gets a patch by simply looking
@@ -275,12 +361,15 @@ fn get_changed_files(commit: &str) -> Vec<String> {
         .arg("--name-only")
         .arg(commit)
         .arg("-r")
-        .output().unwrap();
+        .output()
+        .unwrap();
     String::from_utf8(file_diff.stdout)
         .unwrap()
         .lines()
         .map(|line| line.to_owned())
         .collect()
-    }
+}
 
-
+fn crate_name_from_path(path: &str) -> &str {
+    path.split_once("/").unwrap().1
+}
