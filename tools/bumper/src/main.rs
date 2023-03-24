@@ -1,11 +1,14 @@
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
+    fmt::Display,
     process::Command,
-    str::FromStr, fmt::Display,
+    str::FromStr,
 };
 
-use cargo_toml::{Manifest, Inheritable, Dependency};
+use std::io::Write;
+
+use cargo_toml::{Dependency, Inheritable, Manifest};
 
 #[derive(Copy, Clone, Debug)]
 enum Bump {
@@ -47,11 +50,13 @@ impl Display for Version {
 }
 
 impl Version {
-    fn bump(&mut self, bump: Bump) {
+    fn bump(&self, bump: Bump) -> Self {
+        let mut new = self.clone();
         match bump {
-            PATCH => {self.patch += 1},
-            MINOR => {self.minor += 1},
+            PATCH => new.patch += 1,
+            MINOR => new.minor += 1,
         };
+        new
     }
 }
 
@@ -70,75 +75,43 @@ async fn main() {
         "common/s2n-codec",
     ];
 
-    let crate_names: Vec<&str> = crates
-        .iter()
-        .map(|path| path.split_once("/").unwrap().1)
-        .collect();
-
     // build dependency graph
     // we want a list of the immediate dependencies for each of our crates of
     // interest. This is used to calculate which crates need to have their
     // versions bumped.
     // package -> [consumers], e.g. s2n-quic-transport -> [s2n-quic]
-    let mut dep_graph: HashMap<String, Vec<String>> = HashMap::new();
+    let dep_graph = build_dep_graph(&crates);
 
-    // we can not just look at the dependency graph for, e.g. s2n-quic, because
-    // some crates, like s2n-quic-rustls won't show up in it. So we look at each
-    for name in crate_names.iter().cloned() {
-        let deps = get_dependencies(name, &crate_names);
-        for d in deps {
-            dep_graph.entry(d).or_default().push(name.to_owned());
-        }
-    }
-    println!("dependency graph: {:?}", dep_graph);
-
+    // get the hash of the last commit that was released
     let (version, previous_release_commit) = get_release().await;
-    println!(
-        "version: {:?}, commit: {:?}",
-        version, previous_release_commit
-    );
 
+    // get a list of all the commits that have happened since that release
     let commits = get_commits(&previous_release_commit);
-    println!("commits: {:?}", commits);
 
-    let changed_files = get_changed_files(&previous_release_commit);
-    let changed_crates: Vec<String> = crates
-        .iter()
-        .filter(|release_crate| {
-            changed_files
-                .iter()
-                .any(|file| file.starts_with(**release_crate))
-        })
-        .map(|release_crate| (*release_crate).to_owned())
-        .collect();
+    let changed_files = get_changed_files_range(&previous_release_commit);
+    let changed_crates = get_changed_crates(changed_files, &crates);
+
     let mut bumps = HashMap::new();
 
+    // each crate that has been changed needs at least a patch bump
     for release_crate in changed_crates {
         bumps.insert(release_crate, Bump::PATCH);
     }
-    println!("bumps: {:?}", bumps);
 
-    let feat_files: HashSet<String> = commits
+    let feat_files = commits
         .iter()
         .filter(|(_hash, description)| description.starts_with("feat"))
         .map(|(hash, _desciption)| get_changed_files(hash))
         .flatten()
+        .collect::<HashSet<String>>()
+        .into_iter()
         .collect();
-    let changed_crates: Vec<String> = crates
-        .iter()
-        .filter(|release_crate| {
-            changed_files
-                .iter()
-                .any(|file| file.starts_with(**release_crate))
-        })
-        .map(|release_crate| (*release_crate).to_owned())
-        .collect();
+    let changed_crates: Vec<String> = get_changed_crates(feat_files, &crates);
 
     for release_crate in changed_crates {
         bumps.insert(release_crate, Bump::MINOR);
     }
 
-    println!("bumps: {:?}", bumps);
 
     // for any package that has been changed, it's consumers must at least do a
     // minor bump to actually consume the updated dependency
@@ -170,15 +143,6 @@ async fn main() {
         }
     }
 
-    let toml = cargo_toml::Manifest::from_path("./quic/s2n-quic-core/Cargo.toml").unwrap();
-    println!("{:?}", toml);
-    let md = toml.package();
-    println!("package metadata");
-    println!("{:?}", md);
-    let version = md.version();
-    println!("crate version is {:?}", version);
-    println!("crate build deps: {:?}", toml.dependencies);
-
     let mut versions = HashMap::new();
     let mut manifests = HashMap::new();
     for c in crates.iter() {
@@ -192,51 +156,69 @@ async fn main() {
 
     println!("parsed versions: {:?}", versions);
 
-    // update the version for each crate
-    //for (c, manifest) in manifests.iter_mut() {
-    //    let new_version = versions.get(c).unwrap();
-    //    let package = manifest.package.as_mut().unwrap();
-    //    package.version = Inheritable::Set(new_version.to_string());
-    //
-    //    // update the dependencies
-    //    let deps = &mut manifest.dependencies;
-    //    for (crate_path, _bump) in versions.iter() {
-    //        let crate_name = crate_name_from_path(crate_path);
-    //            if let Some(dep) = deps.get_mut(crate_name) {
-    //                if let Dependency::Detailed(detail) = dep {
-    //                    let dep_version = versions.get(crate_path).unwrap();
-    //                    detail.version = Some(format!("={}", dep_version));
-    //                } else {
-    //                    panic!("I was not prepared for this");
-    //                }
-    //            }
-    //    }
-    //}
+    // replace crate versions
+    for (c, b) in bumps.iter() {
+        // we need to bump the version
+        let v = versions.get(c).unwrap();
+        let old_version = format!("version = \"{}\"", v);
+        let new_version = format!("version = \"{}", v.bump(*b));
 
-    // rewrite the Cargo.toml files
-    let manifest = manifests.get("quic/s2n-quic-core").unwrap();
-    let manifest_str = toml::to_string(manifest).unwrap();
-    println!("manifest string is {}", manifest_str);
+        let new_manifest = manifests
+            .get(c.as_str())
+            .unwrap()
+            .replace(&old_version, &new_version);
+        manifests.insert(c, new_manifest);
+    }
 
+    // replace all of the dependencies
+    for (c, b) in bumps.iter() {
+        let v = versions.get(c).unwrap();
+        // s2n-codec = { version = "=0.4.0", path = "../../common/s2n-codec", default-features = false }
+        let old_dep = format!("{} = {{ version = \"={}\",", crate_name_from_path(c), v);
+        let new_dep = format!(
+            "{} = {{ version = \"={}\",",
+            crate_name_from_path(c),
+            v.bump(*b)
+        );
+        if let Some(consumers) = dep_graph.get(c) {
+            for consumer in consumers {
+                let new_manifest = manifests
+                    .get(consumer.as_str())
+                    .unwrap()
+                    .replace(&old_dep, &new_dep);
+                manifests.insert(c, new_manifest);
+            }
+        }
+    }
 
-    // just figure out what has had the feature release.
-    // if it hasn't had a feature release, figure out what gets a patch by simply looking
-    // at the diffs between the last release and the current point in time.
-
-    // get the previous release commit from github and release version
-
-    // check that that is the version that we are currently on, otherwise there
-    // a failed release in-between
-
-    // get the list of commits that have happened since then.
-
-    // calculate the proper version bumps
-
-    // resolve the build problems
+    for (crate_path, manifest) in manifests {
+        let name = crate_name_from_path(crate_path);
+        let mut output = std::fs::File::create(name).unwrap();
+        write!(output, "{}", manifest);
+    }
 
     // create a pr with the changes
 
     // ensure that no new commits have happened since then
+}
+
+fn build_dep_graph(crates: &Vec<&str>) -> HashMap<String, Vec<String>> {
+    let mut dep_graph: HashMap<String, Vec<String>> = HashMap::new();
+
+    let crate_names: Vec<&str> = crates
+        .iter()
+        .map(|path| path.split_once("/").unwrap().1)
+        .collect();
+
+    // we can not just look at the dependency graph for, e.g. s2n-quic, because
+    // some crates, like s2n-quic-rustls won't show up in it. So we look at each
+    for name in crate_names.iter().cloned() {
+        let deps = get_dependencies(name, &crate_names);
+        for d in deps {
+            dep_graph.entry(d).or_default().push(name.to_owned());
+        }
+    }
+    dep_graph
 }
 
 /// `get_dependencies` shells out to `cargo tree` to calculate the direct
@@ -293,10 +275,10 @@ fn get_dependencies(name: &str, interest_list: &Vec<&str>) -> Vec<String> {
 
 async fn get_release() -> (String, String) {
     //return ("v1.17.1".to_owned(), "a6c8fbe52596564d632343e7cb4969954a1098ff".to_owned());
-    return (
-        "v1.17.0".to_owned(),
-        "db9671be670549421845e5b869b7a2e0735d2aca".to_owned(),
-    );
+    //return (
+    //    "v1.17.0".to_owned(),
+    //    "db9671be670549421845e5b869b7a2e0735d2aca".to_owned(),
+    //);
     let octocrab = octocrab::instance();
 
     let page = octocrab
@@ -372,4 +354,16 @@ fn get_changed_files(commit: &str) -> Vec<String> {
 
 fn crate_name_from_path(path: &str) -> &str {
     path.split_once("/").unwrap().1
+}
+
+fn get_changed_crates(changed_files: Vec<String>, crates: &Vec<&str>) -> Vec<String> {
+    crates
+    .iter()
+    .filter(|release_crate| {
+        changed_files
+            .iter()
+            .any(|file| file.starts_with(**release_crate))
+    })
+    .map(|release_crate| (*release_crate).to_owned())
+    .collect()
 }
