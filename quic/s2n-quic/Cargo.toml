@@ -2,12 +2,12 @@
 name = "s2n-quic"
 version = "1.17.1"
 description = "A Rust implementation of the IETF QUIC protocol"
-repository = "https://github.com/aws/s2n-quic"
-authors = ["AWS s2n"]
-edition = "2021"
-rust-version = "1.63"
-license = "Apache-2.0"
-# Exclude corpus files when publishing to crates.io
+repository.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# Exclude api.snap and corpus files when publishing to crates.io
 exclude = ["corpus.tar.gz"]
 
 [features]

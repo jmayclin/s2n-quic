@@ -2,10 +2,10 @@
 name = "s2n-quic-events"
 # this in an unpublished internal crate so the version should not be changed
 version = "0.1.0"
-authors = ["AWS s2n"]
-edition = "2021"
-rust-version = "1.63"
-license = "Apache-2.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 # This is a commit-time crate and should not be published
 publish = false
 

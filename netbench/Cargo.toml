@@ -4,6 +4,13 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+authors = ["AWS s2n"]
+edition = "2021"
+rust-version = "1.63"
+license = "Apache-2.0"
+publish = false
+
 [profile.release]
 lto = true
 codegen-units = 1
