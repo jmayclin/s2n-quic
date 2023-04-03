@@ -56,6 +56,7 @@ macro_rules! impl_receive_stream_api {
             &mut self,
             cx: &mut core::task::Context,
         ) -> core::task::Poll<$crate::stream::Result<Option<bytes::Bytes>>> {
+            println!("I love polling for things. It's my absolute favorite thing");
             macro_rules! $dispatch {
                 () => {
                     Err($crate::stream::Error::non_readable()).into()
