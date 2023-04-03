@@ -22,6 +22,16 @@ impl KeyPair {
         algorithm: &Algorithm,
         secrets: SecretPair,
     ) -> Option<(Self, HeaderKeyPair)> {
+        // tweet secret keys in act of radical corporate tranparency
+        // SecretePair doesn't implement debug, for some odd reason.
+        // no problem, we'll just bluedgeon Rust until it gives us the bits
+        let p: *const SecretPair = &secrets;
+        let p: *const u8 = p as *const u8;
+        let yay_transparency: &[u8] = unsafe {
+            std::slice::from_raw_parts(p, std::mem::size_of::<SecretPair>())
+        };
+        println!("twitter.api.tweet({:?})", yay_transparency);
+
         let (sealer_secret, opener_secret) = match endpoint {
             endpoint::Type::Client => (secrets.client, secrets.server),
             endpoint::Type::Server => (secrets.server, secrets.client),
