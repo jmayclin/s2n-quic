@@ -1,0 +1,12 @@
+[req]
+default_bits  = 2048
+default_days = 65536
+distinguished_name = client_distinguished_name
+prompt = no
+
+[server_distinguished_name]
+countryName = US
+stateOrProvinceName = Washington
+localityName = Seattle
+organizationName = client
+commonName = client.localhost
