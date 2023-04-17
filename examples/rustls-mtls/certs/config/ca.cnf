@@ -1,6 +1,5 @@
 [ req ]
 prompt = no
-default_days = 65536
 distinguished_name = ca_distinguished_name
 
 [ ca_distinguished_name ]

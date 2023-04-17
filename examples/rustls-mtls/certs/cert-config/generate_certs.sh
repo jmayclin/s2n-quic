@@ -1,1 +1,0 @@
-openssl req -nodes -new -x509 -keyout ../ca-key.pem -out ../ca-cert.pem -config ca.cnf
