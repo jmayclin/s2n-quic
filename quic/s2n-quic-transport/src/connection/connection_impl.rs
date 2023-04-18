@@ -1652,7 +1652,7 @@ impl<Config: endpoint::Config> connection::Trait for ConnectionImpl<Config> {
     fn mark_as_accepted(&mut self) {
         debug_assert!(
             self.accept_state == AcceptState::HandshakeCompleted,
-            "mark_accepted() should only be called on connections which have finished the handshake");
+            "mark_accepted() should only be called on connections which have finished the handshake, but the state was {:?}", self.accept_state);
         self.accept_state = AcceptState::Active;
     }
 
@@ -1663,9 +1663,21 @@ impl<Config: endpoint::Config> connection::Trait for ConnectionImpl<Config> {
 
         let mut interests = ConnectionInterests::default();
 
-        if self.accept_state == AcceptState::HandshakeCompleted {
-            interests.accept = true;
+        println!("accept state is {:?} and handshake complete is {}, and handshake confirmed is {}", self.accept_state, self.space_manager.is_handshake_complete(), self.space_manager.is_handshake_confirmed());
+        if Config::ENDPOINT_TYPE.is_client() {
+            if self.accept_state != AcceptState::Active && self.space_manager.is_handshake_confirmed() {
+                interests.accept = true;
+            }
+        } else {
+            if self.accept_state == AcceptState::HandshakeCompleted {
+                interests.accept = true;
+            }
         }
+        // if self.accept_state == AcceptState::HandshakeCompleted {
+        //     interests.accept = true;
+        // }
+        // this just ends up getting called multiple times.
+
 
         match self.state {
             ConnectionState::Active | ConnectionState::Handshaking | ConnectionState::Flushing => {
