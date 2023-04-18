@@ -152,3 +152,53 @@ async fn into_private_key(path: &Path) -> Result<Vec<u8>, Error> {
         "could not load any valid private keys".to_string(),
     ))
 }
+
+/// Example of a print subscriber which can print all events or only
+/// connection related events.
+pub mod handshake_waiter {
+    use std::sync::Arc;
+
+    use s2n_quic::provider::{event, event::{ConnectionMeta, events::HandshakeStatus}};
+    use tokio::sync::Notify;
+
+    #[derive(Debug, Clone)]
+    pub struct HandshakeWaiter {
+        // This is the notifier used to wake up the task once the handshake is
+        // confirmed: https://docs.rs/tokio/latest/tokio/sync/struct.Notify.html
+        pub notifier: Arc<Notify>,
+    }
+
+    impl HandshakeWaiter {
+        pub fn new() -> Self {
+            HandshakeWaiter { notifier: Arc::new(Notify::new()) }
+        }
+
+        pub fn notifier(&self) -> Arc<Notify> {
+            Arc::clone(&self.notifier)
+        }
+    }
+
+    impl event::Subscriber for HandshakeWaiter {
+        type ConnectionContext = Arc<Notify>;
+
+        /// Initialize the Connection Context.
+        fn create_connection_context(
+            &mut self,
+            _meta: &ConnectionMeta,
+            _info: &event::ConnectionInfo,
+        ) -> Self::ConnectionContext {
+            self.notifier()
+        }
+
+        fn on_handshake_status_updated(
+                    &mut self,
+                    context: &mut Self::ConnectionContext,
+                    _meta: &ConnectionMeta,
+                    event: &event::events::HandshakeStatusUpdated,
+                ) {
+            if let HandshakeStatus::Confirmed{ .. } = event.status {
+                context.notify_one()
+            }
+        }
+    }
+}

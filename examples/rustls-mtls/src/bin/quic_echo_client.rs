@@ -1,7 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-
-use rustls_mtls::{initialize_logger, MtlsProvider};
+use rustls_mtls::{initialize_logger, MtlsProvider, handshake_waiter::HandshakeWaiter};
 use s2n_quic::{client::Connect, Client};
 use std::{error::Error, net::SocketAddr};
 
@@ -14,15 +13,21 @@ pub static MY_KEY_PEM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/certs/client
 async fn main() -> Result<(), Box<dyn Error>> {
     initialize_logger("client");
     let provider = MtlsProvider::new(CACERT_PEM, MY_CERT_PEM, MY_KEY_PEM).await?;
+    let waiter = HandshakeWaiter::new();
+    let notifier = waiter.notifier();
     let client = Client::builder()
         .with_event(s2n_quic::provider::event::tracing::Subscriber::default())?
         .with_tls(provider)?
         .with_io("0.0.0.0:0")?
+        .with_event(waiter)?
         .start()?;
 
     let addr: SocketAddr = "127.0.0.1:4433".parse()?;
     let connect = Connect::new(addr).with_server_name("localhost");
     let mut connection = client.connect(connect).await?;
+    println!("just gonna do a little nap until the handshake gets confirmed");
+    notifier.notified().await;
+    println!("by golly gee, I do say an exciting occurence has occured");
 
     // ensure the connection doesn't time out with inactivity
     connection.keep_alive(true)?;
