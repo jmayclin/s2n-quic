@@ -153,33 +153,27 @@ async fn into_private_key(path: &Path) -> Result<Vec<u8>, Error> {
     ))
 }
 
-/// Example of a print subscriber which can print all events or only
-/// connection related events.
 pub mod handshake_waiter {
     use std::sync::Arc;
 
     use s2n_quic::provider::{event, event::{ConnectionMeta, events::HandshakeStatus}};
-    use tokio::sync::Notify;
+    use tokio::sync::{Notify, oneshot::{self, Receiver, Sender}};
 
-    #[derive(Debug, Clone)]
     pub struct HandshakeWaiter {
         // This is the notifier used to wake up the task once the handshake is
         // confirmed: https://docs.rs/tokio/latest/tokio/sync/struct.Notify.html
-        pub notifier: Arc<Notify>,
+        pub tx_handle: Option<Sender<Result<(), ()>>>,
     }
 
     impl HandshakeWaiter {
-        pub fn new() -> Self {
-            HandshakeWaiter { notifier: Arc::new(Notify::new()) }
-        }
-
-        pub fn notifier(&self) -> Arc<Notify> {
-            Arc::clone(&self.notifier)
+        pub fn new() -> (oneshot::Receiver<Result<(),()>>, Self) {
+            let (tx, rx) = oneshot::channel();
+            (rx, HandshakeWaiter { tx_handle: Some(tx) })
         }
     }
 
     impl event::Subscriber for HandshakeWaiter {
-        type ConnectionContext = Arc<Notify>;
+        type ConnectionContext = Option<oneshot::Sender<Result<(),()>>>;
 
         /// Initialize the Connection Context.
         fn create_connection_context(
@@ -187,7 +181,7 @@ pub mod handshake_waiter {
             _meta: &ConnectionMeta,
             _info: &event::ConnectionInfo,
         ) -> Self::ConnectionContext {
-            self.notifier()
+            self.tx_handle.take()
         }
 
         fn on_handshake_status_updated(
@@ -197,7 +191,20 @@ pub mod handshake_waiter {
                     event: &event::events::HandshakeStatusUpdated,
                 ) {
             if let HandshakeStatus::Confirmed{ .. } = event.status {
-                context.notify_one()
+                let result = context.take().unwrap().send(Ok(()));
+                result.unwrap();
+            }
+        }
+
+        fn on_connection_closed(
+                    &mut self,
+                    context: &mut Self::ConnectionContext,
+                    meta: &ConnectionMeta,
+                    event: &event::events::ConnectionClosed,
+                ) {
+            if let Some(sender) = context.take() {
+                let result = sender.send(Err(()));
+                result.expect("it was all ending anyways");
             }
         }
     }

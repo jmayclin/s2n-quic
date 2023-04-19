@@ -6,28 +6,34 @@ use std::{error::Error, net::SocketAddr};
 
 /// NOTE: this certificate is to be used for demonstration purposes only!
 pub static CACERT_PEM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/certs/ca-cert.pem");
-pub static MY_CERT_PEM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/certs/client-cert.pem");
+// uncomment this one to see the failure mode
+pub static MY_CERT_PEM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/certs/client-ss.pem");
+//pub static MY_CERT_PEM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/certs/client-cert.pem");
 pub static MY_KEY_PEM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/certs/client-key.pem");
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     initialize_logger("client");
     let provider = MtlsProvider::new(CACERT_PEM, MY_CERT_PEM, MY_KEY_PEM).await?;
-    let waiter = HandshakeWaiter::new();
-    let notifier = waiter.notifier();
+    let (rx, waiter) = HandshakeWaiter::new();
     let client = Client::builder()
         .with_event(s2n_quic::provider::event::tracing::Subscriber::default())?
         .with_tls(provider)?
         .with_io("0.0.0.0:0")?
-        .with_event(waiter)?
+        .with_event((s2n_quic::provider::event::tracing::Subscriber::default(), waiter))?
         .start()?;
 
     let addr: SocketAddr = "127.0.0.1:4433".parse()?;
     let connect = Connect::new(addr).with_server_name("localhost");
     let mut connection = client.connect(connect).await?;
     println!("just gonna do a little nap until the handshake gets confirmed");
-    notifier.notified().await;
-    println!("by golly gee, I do say an exciting occurence has occured");
+    match rx.await {
+        Ok(message) => {match message {
+            Ok(_) => {println!("the server told me to tell you that they think your certificate is pretty")},
+            Err(_) => {panic!("the server told me to tell you that they think your certificate is ugly and they hate it.")}
+        }},
+        Err(_) => panic!("something interior to the channel failed"),
+    };
 
     // ensure the connection doesn't time out with inactivity
     connection.keep_alive(true)?;
